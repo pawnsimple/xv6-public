@@ -138,7 +138,7 @@ userinit(void)
   p->tf->eflags = FL_IF;
   p->tf->esp = PGSIZE;
   p->tf->eip = 0;  // beginning of initcode.S
-  p->tickets = DEFAULT;
+  p->ticket = DEFAULT;
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
@@ -322,6 +322,28 @@ wait(void)
   }
 }
 
+unsigned long int next=1;
+//Random Number Generator in range [0,MAXTICKETS]
+int random(void)
+{
+          next = next*1103515245 +12345;
+          next = (unsigned int) (next*65536);
+          return next;
+}
+
+
+int countTick() {
+    int c = 0;
+    struct proc *p;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+         if(p->state == RUNNABLE){                                               //Danger: need critical region
+             c += p->ticket;
+         }
+     }
+     return c;
+}
+
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -335,6 +357,7 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
+  int ticketSort,totalTicket;
   c->proc = 0;
 
   for(;;){
@@ -343,24 +366,36 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+    totalTicket = countTick(); 
+    if(totalTicket > 0) {
+        ticketSort = random()%totalTicket;
+    
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+      if(p->state == RUNNABLE) {
+          ticketSort  = ticketSort - p->ticket;
+          if(ticketSort < 0 ) {
+               break;
+            }
+        }
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+      }
+           // Switch to chosen process.  It is the process's job
+          // to release ptable.lock and then reacquire it
+          // before jumping back to us.
+          c->proc = p;
+          switchuvm(p);
+          p->state = RUNNING;
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
+          swtch(&(c->scheduler), p->context);
+          switchkvm();
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
-    }
+          // Process is done running for now.
+          // It should have changed its p->state before coming back.
+          c->proc = 0;
+          
+     
+        }
+    
     release(&ptable.lock);
 
   }
